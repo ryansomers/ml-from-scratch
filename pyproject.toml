@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mlfs"
+version = "0.1.0"
+description = "Machine learning from scratch in NumPy: regression, PCA, classifiers, clustering and a reverse-mode autograd engine."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Ryan Somers" }]
+requires-python = ">=3.11"
+# The library itself depends only on NumPy.
+dependencies = ["numpy>=1.26"]
+
+[project.optional-dependencies]
+# scikit-learn / matplotlib / pandas are used only by scripts (data loading,
+# reference comparisons, plots) and by a few tests that check against sklearn.
+scripts = ["scikit-learn>=1.4", "matplotlib>=3.8", "pandas>=2.1"]
+dev = ["pytest>=8", "ruff>=0.6", "scikit-learn>=1.4", "matplotlib>=3.8", "pandas>=2.1"]
+
+[tool.setuptools]
+packages = ["mlfs"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -m 'not integration'"
+markers = ["integration: needs network or large downloads; skipped by default"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "NPY"]

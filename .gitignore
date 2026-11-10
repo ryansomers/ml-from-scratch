@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+.env
+.DS_Store
+# Downloaded datasets (fetch with scripts/train_mnist.py) and sklearn's cache
+data/*
+!data/.gitkeep
