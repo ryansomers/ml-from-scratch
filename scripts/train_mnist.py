@@ -1,0 +1,144 @@
+"""Train a 784-128-10 MLP on MNIST with the mlfs Tensor autograd engine.
+
+    python scripts/train_mnist.py [--epochs 10] [--hidden 128] [--batch-size 128]
+
+Holds out the last 5,000 training images for validation, trains with Adam on
+mini-batches, then reports test accuracy once at the end. Writes
+docs/mnist_results.md and docs/figures/mnist_training.png.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from mnist_data import load_mnist  # noqa: E402
+
+from mlfs.autograd import MLP, Adam, Tensor, cross_entropy  # noqa: E402
+
+
+def evaluate(model: MLP, X: np.ndarray, y: np.ndarray, batch_size: int = 2000):
+    """Return (mean loss, accuracy) without building a big graph all at once."""
+    losses, correct = [], 0
+    for i in range(0, len(X), batch_size):
+        logits = model(Tensor(X[i : i + batch_size]))
+        losses.append(cross_entropy(logits, y[i : i + batch_size]).item() * len(logits.data))
+        correct += int((logits.data.argmax(axis=1) == y[i : i + batch_size]).sum())
+    return sum(losses) / len(X), correct / len(X)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--hidden", type=int, default=128)
+    parser.add_argument("--batch-size", type=int, default=128)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--no-write", action="store_true", help="skip writing docs/")
+    args = parser.parse_args()
+
+    x_train, y_train, x_test, y_test = load_mnist()
+
+    # Flatten, scale to [0, 1], and use float32 for speed.
+    def prep(x):
+        return (x.reshape(len(x), -1) / 255.0).astype(np.float32)
+
+    x_train, x_test = prep(x_train), prep(x_test)
+    y_train, y_test = y_train.astype(np.int64), y_test.astype(np.int64)
+    x_train, x_val = x_train[:-5000], x_train[-5000:]
+    y_train, y_val = y_train[:-5000], y_train[-5000:]
+
+    rng = np.random.default_rng(args.seed)
+    sizes = [784, args.hidden, 10]
+    model = MLP(sizes, rng=rng, dtype=np.float32)
+    opt = Adam(model.parameters(), lr=args.lr)
+    n_params = sum(p.data.size for p in model.parameters())
+    print(f"MLP {sizes}: {n_params:,} parameters; train {len(x_train)}, val {len(x_val)}")
+
+    history = []
+    start = time.perf_counter()
+    for epoch in range(1, args.epochs + 1):
+        order = rng.permutation(len(x_train))
+        running, seen = 0.0, 0
+        for i in range(0, len(order), args.batch_size):
+            idx = order[i : i + args.batch_size]
+            opt.zero_grad()
+            loss = cross_entropy(model(Tensor(x_train[idx])), y_train[idx])
+            loss.backward()
+            opt.step()
+            running += loss.item() * len(idx)
+            seen += len(idx)
+        val_loss, val_acc = evaluate(model, x_val, y_val)
+        history.append((epoch, running / seen, val_loss, val_acc))
+        print(
+            f"epoch {epoch:2d}  train loss {running / seen:.4f}  "
+            f"val loss {val_loss:.4f}  val acc {val_acc:.4f}  "
+            f"({time.perf_counter() - start:.1f}s)"
+        )
+    elapsed = time.perf_counter() - start
+
+    test_loss, test_acc = evaluate(model, x_test, y_test)
+    print(f"TEST accuracy {test_acc:.4f} (loss {test_loss:.4f}) after {elapsed:.1f}s of training")
+
+    if not args.no_write:
+        write_report(args, sizes, n_params, history, test_acc, test_loss, elapsed)
+
+
+def write_report(args, sizes, n_params, history, test_acc, test_loss, elapsed) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    docs = ROOT / "docs"
+    (docs / "figures").mkdir(parents=True, exist_ok=True)
+    epochs = [h[0] for h in history]
+
+    fig, (ax_loss, ax_acc) = plt.subplots(1, 2, figsize=(9, 3.4))
+    ax_loss.plot(epochs, [h[1] for h in history], marker="o", ms=3, label="train")
+    ax_loss.plot(epochs, [h[2] for h in history], marker="o", ms=3, label="validation")
+    ax_loss.set(xlabel="epoch", ylabel="cross-entropy", title="Loss")
+    ax_loss.legend(frameon=False)
+    ax_acc.plot(epochs, [100 * h[3] for h in history], marker="o", ms=3, color="C1")
+    ax_acc.set(xlabel="epoch", ylabel="accuracy (%)", title="Validation accuracy")
+    for ax in (ax_loss, ax_acc):
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.grid(alpha=0.3)
+    fig.suptitle(f"MLP {'-'.join(map(str, sizes))} on MNIST (mlfs Tensor engine, Adam)")
+    fig.tight_layout()
+    fig.savefig(docs / "figures" / "mnist_training.png", dpi=120)
+
+    rows = "\n".join(
+        f"| {e} | {tl:.4f} | {vl:.4f} | {100 * va:.2f}% |" for e, tl, vl, va in history
+    )
+    (docs / "mnist_results.md").write_text(
+        f"""# MNIST with the mlfs Tensor engine
+
+Generated by `python scripts/train_mnist.py` (seed {args.seed}).
+
+- Architecture: {"-".join(map(str, sizes))} MLP with ReLU, {n_params:,} parameters, float32
+- Optimiser: Adam, lr {args.lr}, batch size {args.batch_size}, {args.epochs} epochs
+- Split: 55,000 train / 5,000 validation (last 5k of the official train set) / 10,000 test
+- Training time: {elapsed:.1f}s on CPU
+
+**Test accuracy: {100 * test_acc:.2f}%** (test loss {test_loss:.4f}), evaluated once after training.
+
+| epoch | train loss | val loss | val accuracy |
+|---:|---:|---:|---:|
+{rows}
+
+![training curves](figures/mnist_training.png)
+"""
+    )
+    print("wrote docs/mnist_results.md and docs/figures/mnist_training.png")
+
+
+if __name__ == "__main__":
+    main()
