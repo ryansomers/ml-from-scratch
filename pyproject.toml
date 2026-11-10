@@ -19,8 +19,8 @@ dependencies = ["numpy>=1.26"]
 scripts = ["scikit-learn>=1.4", "matplotlib>=3.8", "pandas>=2.1"]
 dev = ["pytest>=8", "ruff>=0.6", "scikit-learn>=1.4", "matplotlib>=3.8", "pandas>=2.1"]
 
-[tool.setuptools]
-packages = ["mlfs"]
+[tool.setuptools.packages.find]
+include = ["mlfs*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
