@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from mlfs._linalg import largest_singular_value_sq
 from mlfs.metrics import r2_score
 
 SOLVERS = ("normal", "qr", "gd")
@@ -70,20 +71,6 @@ def back_substitution(R: np.ndarray, b: np.ndarray) -> np.ndarray:
             raise np.linalg.LinAlgError("singular triangular matrix")
         x[i] = (b[i] - R[i, i + 1 :] @ x[i + 1 :]) / R[i, i]
     return x
-
-
-def _largest_singular_value_sq(X: np.ndarray, n_iter: int = 100, seed: int = 0) -> float:
-    """Estimate sigma_max(X)^2, the top eigenvalue of X^T X, by power iteration."""
-    v = np.random.default_rng(seed).normal(size=X.shape[1])
-    v /= np.linalg.norm(v)
-    eig = 0.0
-    for _ in range(n_iter):
-        w = X.T @ (X @ v)
-        eig = float(np.linalg.norm(w))
-        if eig == 0.0:
-            return 0.0
-        v = w / eig
-    return eig
 
 
 class Ridge:
@@ -159,7 +146,7 @@ class Ridge:
         # L-Lipschitz with L = (sigma_max^2 + alpha) / n.
         lr = self.lr
         if lr is None:
-            lipschitz = (_largest_singular_value_sq(X) + self.alpha) / n
+            lipschitz = (largest_singular_value_sq(X) + self.alpha) / n
             lr = 1.0 / lipschitz
         w = np.zeros(d)
         self.loss_history_: list[float] = []
